@@ -19,6 +19,24 @@ contract Market {
         uint256 price;
     }
 
+    event Listed(
+        uint256 listingId,
+        address seller,
+        address token,
+        uint256 tokenId,
+        uint256 price
+    );
+
+    event Sale(
+        uint256 listingId,
+        address buyer,
+        address token,
+        uint256 tokenId,
+        uint256 price
+    );
+
+    event Cancel(uint256 listingId, address seller);
+
     mapping(uint256 => Listing) private _listings;
 
     uint256 private _listingId;
@@ -31,7 +49,7 @@ contract Market {
         // important to first transfer the token to the contract, before creating the listing below.
         // if transfer fails we would otherwise have a listing to sell but no token.
         // in contrast, transferring things away should always come last.
-        IERC721(token).transferFrom(msg.sender, address[this], tokenId);
+        IERC721(token).transferFrom(msg.sender, address(this), tokenId);
 
         // memory means this variable will be deleted after the function call.
         Listing memory listing = Listing(
@@ -46,13 +64,23 @@ contract Market {
         // state variables are always stored in storage.
         _listingId++;
         _listings[_listingId] = listing;
+
+        emit Listed(_listingId, msg.sender, token, tokenId, price);
+    }
+
+    function getListing(uint256 listingId)
+        public
+        view
+        returns (Listing memory)
+    {
+        return _listings[listingId];
     }
 
     function buyToken(uint256 listingId) external payable {
         // here using storage will create a pointer to the _listings mapping above.
         // every change to the "listing" variable will thus be updated on storage. with "memory" they would not be permanent.
         // see video 14:50
-        Listing storage listing = _listings(listingId);
+        Listing storage listing = _listings[listingId];
 
         require(msg.sender != listing.seller, "Seller cannot be buyer");
         require(
@@ -63,23 +91,41 @@ contract Market {
 
         // Here, important to transfer funds only after the token could be transferred.
         // Always expect external calls to fail.
-        IERC721(listing.token).transferFrom(address[this], msg.sender, tokenId);
+        IERC721(listing.token).transferFrom(
+            address(this),
+            msg.sender,
+            listing.tokenId
+        );
         payable(listing.seller).transfer(listing.price);
 
         listing.status = ListingStatus.Sold;
+
+        emit Sale(
+            listingId,
+            msg.sender,
+            listing.token,
+            listing.tokenId,
+            listing.price
+        );
     }
 
     function cancel(uint256 listingId) public {
-        Listing storage listing = _listings(listingId);
+        Listing storage listing = _listings[listingId];
         require(listing.seller == msg.sender, "You are not the seller");
         require(
-            listing.status == Listing.status.Active,
+            listing.status == ListingStatus.Active,
             "Listing is not active"
         );
 
-        IERC721(listing.token).transferFrom(address[this], msg.sender, tokenId);
+        IERC721(listing.token).transferFrom(
+            address(this),
+            msg.sender,
+            listing.tokenId
+        );
         // Here I disagree with video, if we update status before attempting to transfer..
         // if it fails, seller could not re-try the function and token would be stuck in contract.
         listing.status = ListingStatus.Cancelled;
+
+        emit Cancel(listingId, listing.seller);
     }
 }
